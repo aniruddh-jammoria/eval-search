@@ -1,115 +1,230 @@
 # eval-search
 
-Benchmark web search APIs for newsletter generation. Runs structured queries across topic categories, scores results on recency, relevance, and newsworthiness using two independent LLM judges, and produces a self-contained HTML report.
+Picking a search API for a content pipeline is harder than it looks. Different providers return very different results — in freshness, relevance, and cost — and those differences compound when you're running queries across multiple topics every day.
 
-## Providers supported
+**eval-search** is a benchmarking framework that runs the same queries across multiple search providers, scores the results using two independent LLM judges (Claude and GPT-4o-mini), and produces a self-contained HTML report so you can compare providers on the metrics that actually matter for your use case.
 
-| Provider | Endpoint IDs |
-|---|---|
-| [Brave Search](https://brave.com/search/api/) | `brave_web` |
-| [Exa](https://exa.ai/) | `exa_auto_native`, `exa_auto_fetch`, `exa_neural`, `exa_keyword` |
-| [Tavily](https://tavily.com/) | `tavily_news`, `tavily_general` |
-| [Serper](https://serper.dev/) | `serper_search`, `serper_news` |
-| [SerpApi](https://serpapi.com/) | `serpapi_google_news`, `serpapi_google_search` |
+It was built with newsletter generation in mind, but the evaluation criteria — recency, relevance, newsworthiness, and cost — apply to most content pipelines.
 
-You only need API keys for the providers you intend to test.
+## How it works
+
+```
+Query bank → Search providers → Fetch & summarize → LLM judges → HTML report
+```
+
+1. **Search** — the same queries are sent to every provider you select
+2. **Summarize** — each result's page content is fetched and summarized using Claude Haiku (providers that return article content natively skip this step)
+3. **Judge** — Claude Haiku and GPT-4o-mini independently score each result on relevance and newsworthiness (1–5)
+4. **Report** — a single HTML file with charts, tables, and a raw data explorer is saved to `./reports/`
+
+---
 
 ## Setup
 
 **Requires Python 3.11+**
 
 ```bash
+# 1. Create and activate a virtual environment
+python -m venv .venv
+source .venv/bin/activate        # macOS / Linux
+.venv\Scripts\activate           # Windows
+
+# 2. Install
 pip install -e .
+
+# 3. Configure API keys
 cp .env.example .env
-# Fill in API keys for the providers you want to test
+# Open .env and fill in keys for the providers and judges you want to use
 ```
 
-## Usage
+You need:
+- An **Anthropic API key** (`ANTHROPIC_API_KEY`) — required for summarization and for the Claude judge
+- An **OpenAI API key** (`OPENAI_API_KEY`) — required for the GPT-4o-mini judge
+- API keys for whichever **search providers** you want to test (you don't need all of them)
 
-### Run an evaluation
+---
+
+## Quick start
 
 ```bash
-# Quick start — technology topic, Exa and Brave, both judges
 eval-search run --topics technology --providers exa brave
+```
 
-# Specific endpoints only
-eval-search run --topics technology --providers exa --endpoints exa_auto_native,exa_auto_fetch
+This runs 3 queries across Exa and Brave for the technology topic, scores all results, and opens the HTML report in your browser when done.
 
-# Multiple topics, single judge, more results
-eval-search run --topics technology,finance --providers exa --max-results 20 --judge claude
+To preview what would run without making any API calls:
 
-# Preview what would run without making API calls
+```bash
 eval-search run --topics technology --providers exa brave --dry-run
 ```
 
-All options:
+---
 
-| Flag | Default | Description |
-|---|---|---|
-| `--topics` | all | Comma-separated or repeated. See topics below. |
-| `--providers` | all | Comma-separated or repeated. |
-| `--endpoints` | all | Comma-separated endpoint IDs to include. |
-| `--lookback-days` | 7 | Date window for news freshness. |
-| `--max-results` | 10 | Results per query per endpoint. |
-| `--queries-per-topic` | 3 | Queries drawn from the query bank. |
-| `--judge` | both | `claude`, `openai`, or `both`. |
-| `--output-dir` | `./reports` | Where to save JSON and HTML output. |
-| `--no-open` | — | Don't auto-open the report in the browser. |
-| `--no-html` | — | Save JSON only, skip HTML generation. |
-| `--dry-run` | — | Print plan without calling any APIs. |
+## Providers and endpoints
 
-### Re-generate a report from saved JSON
+Each provider can expose multiple **endpoints** — different search modes that return results differently. You can test all endpoints or pick specific ones with `--endpoints`.
 
-```bash
-eval-search report reports/eval_20260614_000353.json
-```
+Run `eval-search providers` to see this table in your terminal at any time.
 
-### Explore providers and queries
+### Brave Search
+| Endpoint ID | Description |
+|---|---|
+| `brave_web` | General web search with freshness filter. Returns a broad mix including homepages and aggregators. |
+| `brave_news` | News-specific index with freshness filter. Better for finding individual articles. |
 
-```bash
-eval-search providers          # List all providers and endpoint IDs
-eval-search queries technology # Show the query bank for a topic
-```
+### Exa
+| Endpoint ID | Description |
+|---|---|
+| `exa_auto_native` | Auto search with article highlights returned directly in the API response. No separate fetch/summarize step — content cost is baked into the search cost. |
+| `exa_auto_fetch` | Auto search without highlights. Pages are fetched and summarized with Claude Haiku separately. Useful for comparing content quality against native highlights. |
+| `exa_auto` | Auto search type with news category filter and highlights. |
+| `exa_neural` | Semantic (neural) search with news category filter. Good for conceptual or broad queries. |
+| `exa_keyword` | Keyword search without news category filter. Most similar to traditional search behaviour. |
+
+### Tavily
+| Endpoint ID | Description |
+|---|---|
+| `tavily_news` | News topic mode. Note: Tavily does not return publication dates, so recency scoring will show "Unknown" for all results. |
+| `tavily_general` | General search at advanced depth. Same limitation on publication dates. |
+
+### Serper
+| Endpoint ID | Description |
+|---|---|
+| `serper_search` | Google web results via Serper with a time filter. |
+| `serper_news` | Google News results via Serper with a past-week filter. |
+
+### SerpApi
+| Endpoint ID | Description |
+|---|---|
+| `serpapi_google_news` | Google News via SerpApi (`engine=google_news`). Returns publication timestamps. |
+| `serpapi_google_search` | Google web search via SerpApi filtered to the news tab. |
+
+---
 
 ## Topics
 
+Ten topics are available out of the box:
+
 `technology` · `finance` · `entertainment` · `music` · `sports` · `science` · `politics` · `investing` · `health` · `business`
+
+---
 
 ## Query bank
 
-Queries live in [`queries.md`](queries.md) — one `## Topic` header per topic, one bullet per query. Edit that file to add, remove, or reword queries. The CLI picks up changes immediately.
+The queries sent to each provider live in [`queries.md`](queries.md). The format is simple — one `## Topic` heading per topic, one bullet per query:
 
-## Report sections
+```markdown
+## Technology
+- latest AI model releases this week
+- enterprise software funding rounds
+- new chip announcements
+```
 
-The HTML report is a single self-contained file (no server required):
+To customize queries for your use case, edit `queries.md` directly. The CLI picks up changes immediately — no restart needed.
 
-1. **Executive Summary** — relevance, newsworthiness, cost, and latency per endpoint
-2. **Recency** — freshness distribution and age box plot
-3. **Relevance & Newsworthiness** — heatmaps per judge, inter-judge agreement scatter and Pearson r
-4. **Cost** — stacked breakdown: search cost / summarization cost (product) / judge cost (eval)
-5. **Latency** — per-endpoint distribution
-6. **Raw Data Explorer** — sortable, filterable table of all results including the summary seen by each judge
-7. **Methodology** — judge prompts verbatim
+You can preview the current queries for any topic:
+
+```bash
+eval-search queries technology
+```
+
+---
+
+## All CLI options
+
+### `eval-search run`
+
+| Flag | Default | Description |
+|---|---|---|
+| `--topics` | all | Topics to evaluate. Comma-separated or repeat the flag. |
+| `--providers` | all | Providers to include. Comma-separated or repeat the flag. |
+| `--endpoints` | all | Specific endpoint IDs to include (comma-separated). |
+| `--lookback-days` | `7` | How far back to look for news. |
+| `--max-results` | `10` | Results per query per endpoint. |
+| `--queries-per-topic` | `3` | How many queries to draw from the query bank per topic. |
+| `--judge` | `both` | Which LLM judges to use: `claude`, `openai`, or `both`. |
+| `--output-dir` | `./reports` | Where to save the JSON and HTML output. |
+| `--no-open` | — | Don't auto-open the report in the browser after the run. |
+| `--no-html` | — | Save JSON only, skip HTML generation. |
+| `--dry-run` | — | Print what would run without calling any APIs. |
+
+### `eval-search report`
+
+Re-generate the HTML report from a previously saved JSON file. Useful if you've updated the report template or want to re-render old results.
+
+```bash
+eval-search report reports/eval_<timestamp>.json
+```
+
+### `eval-search providers` / `eval-search queries`
+
+```bash
+eval-search providers          # List all providers and endpoints
+eval-search queries technology # Show query bank for a topic
+```
+
+---
+
+## What's in the report
+
+The output is a single self-contained HTML file — no server needed, just open it in a browser.
+
+| Section | What you'll find |
+|---|---|
+| **Executive Summary** | Relevance, newsworthiness, product cost, and latency per endpoint at a glance |
+| **Recency** | How fresh the results are — freshness distribution and age box plot |
+| **Relevance & Newsworthiness** | Score heatmaps per judge, inter-judge agreement scatter, and Pearson r |
+| **Cost** | Stacked breakdown by component: search / summarization / judge |
+| **Latency** | Per-endpoint response time distribution |
+| **Raw Data Explorer** | Sortable, filterable table of every result — including the summary shown to each judge |
+| **Methodology** | The exact prompts used by each judge |
+
+---
 
 ## Cost model
 
-Three components are tracked separately:
+Three components are tracked separately so you can see what you'd actually pay in production versus what's just eval overhead:
 
-- **Search cost** — API call cost to the search provider
-- **Summarization cost** — Claude Haiku calls to generate article summaries (product cost; zero for endpoints like `exa_auto_native` that return content natively)
-- **Judge cost** — LLM calls for evaluation only; not a production cost
+| Component | What it covers | Production cost? |
+|---|---|---|
+| **Search** | API call to the search provider | Yes |
+| **Summarization** | Claude Haiku calls to fetch and summarize article content | Yes (zero for endpoints that return content natively, like `exa_auto_native`) |
+| **Judge** | LLM calls used to score results | No — eval framework only |
 
-The summary table and cost chart show **Product cost** (search + summarization) so comparisons reflect what you'd actually pay in production.
+The summary table and cost chart show **Product cost** (search + summarization) so comparisons reflect what you'd pay when running the pipeline for real.
+
+---
 
 ## LLM judges
 
-By default, results are scored by two independent judges:
+By default, every result is scored by two independent judges:
 
 - **Claude Haiku** (`claude-haiku-4-5-20251001`)
 - **GPT-4o-mini**
 
-Each scores relevance and newsworthiness on a 1–5 scale. The report shows both scores side-by-side and computes Pearson r to surface inter-judge disagreement, which helps detect thin or low-quality content that one judge may be more sensitive to.
+Each judge scores relevance and newsworthiness on a 1–5 scale. Running two judges helps surface results where the scores diverge sharply — which often signals thin content, paywalled pages, or homepage-style results that one model penalizes more than the other.
 
-## Environment variables
+The report shows both scores side-by-side and computes Pearson r per endpoint so you can see at a glance how much the judges agree.
 
-See [`.env.example`](.env.example) for all supported variables. At minimum you need the API key for each provider you test, plus `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` for judging.
+The judge prompts are in [`eval_search/judges/prompts.py`](eval_search/judges/prompts.py) and are printed verbatim in the Methodology section of every report.
+
+---
+
+## Customizing for your own use case
+
+eval-search is designed to be adapted. Here's where to make changes:
+
+| What you want to change | Where to change it |
+|---|---|
+| Search queries | [`queries.md`](queries.md) |
+| Topics available | `TopicCategory` enum in [`eval_search/models.py`](eval_search/models.py) |
+| Relevance / newsworthiness rubric | [`eval_search/judges/prompts.py`](eval_search/judges/prompts.py) |
+| Which providers run by default | `--providers` flag or update defaults in [`eval_search/cli.py`](eval_search/cli.py) |
+| Lookback window, result count, concurrency | `--lookback-days`, `--max-results`, or set defaults in `.env` |
+| Report appearance | [`eval_search/report/templates/report.html.j2`](eval_search/report/templates/report.html.j2) |
+
+---
+
+## Feedback
+
+If you run into a bug, have a question, or want to suggest a provider or feature, please [open an issue](https://github.com/aniruddh-jammoria/eval-search/issues). Contributions are welcome.
